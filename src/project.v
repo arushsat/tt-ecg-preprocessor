@@ -1,27 +1,54 @@
-/*
- * Copyright (c) 2024 Your Name
- * SPDX-License-Identifier: Apache-2.0
- */
-
+// SPDX-License-Identifier: Apache-2.0
 `default_nettype none
-
-module tt_um_example (
-    input  wire [7:0] ui_in,    // Dedicated inputs
-    output wire [7:0] uo_out,   // Dedicated outputs
-    input  wire [7:0] uio_in,   // IOs: Input path
-    output wire [7:0] uio_out,  // IOs: Output path
-    output wire [7:0] uio_oe,   // IOs: Enable path (active high: 0=input, 1=output)
-    input  wire       ena,      // always 1 when the design is powered, so you can ignore it
-    input  wire       clk,      // clock
-    input  wire       rst_n     // reset_n - low to reset
+`timescale 1ns/1ps
+// Four-sample moving average with a one-entry elastic output register.
+module tt_um_arush_ecg_preprocessor (
+    input wire [7:0] ui_in,
+    output wire [7:0] uo_out,
+    input wire [7:0] uio_in,
+    output wire [7:0] uio_out,
+    output wire [7:0] uio_oe,
+    input wire ena,
+    input wire clk,
+    input wire rst_n
 );
-
-  // All output pins must be assigned. If not used, assign to 0.
-  assign uo_out  = ui_in + uio_in;  // Example: ou_out is the sum of ui_in and uio_in
-  assign uio_out = 0;
-  assign uio_oe  = 0;
-
-  // List all unused inputs to prevent warnings
-  wire _unused = &{ena, clk, rst_n, 1'b0};
-
+    reg signed [7:0] previous_1, previous_2, previous_3;
+    reg [7:0] result;
+    reg occupied;
+    wire input_valid = uio_in[0];
+    wire output_ready = uio_in[1];
+    wire input_ready = rst_n && ena && (!occupied || output_ready);
+    wire output_valid = rst_n && ena && occupied;
+    // Explicit sign extension prevents 8-bit intermediate overflow.
+    wire signed [9:0] sample_ext = {{2{ui_in[7]}}, ui_in};
+    wire signed [9:0] old1_ext = {{2{previous_1[7]}}, previous_1};
+    wire signed [9:0] old2_ext = {{2{previous_2[7]}}, previous_2};
+    wire signed [9:0] old3_ext = {{2{previous_3[7]}}, previous_3};
+    wire signed [9:0] sum = sample_ext + old1_ext + old2_ext + old3_ext;
+    // Taking bits 9:2 implements signed division by four, rounded DOWN.
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            previous_1 <= 0;
+            previous_2 <= 0;
+            previous_3 <= 0;
+            result <= 0;
+            occupied <= 0;
+        end else if (ena) begin
+            if (input_valid && input_ready) begin
+                previous_3 <= previous_2;
+                previous_2 <= previous_1;
+                previous_1 <= ui_in;
+                result <= sum[9:2];
+                occupied <= 1;
+            end else if (output_ready) begin
+                occupied <= 0;
+            end
+        end
+    end
+    assign uo_out = result;
+    assign uio_out = {4'b0000, output_valid, input_ready, 2'b00};
+    assign uio_oe = 8'b00001100;
+    // Mark unconnected input pads as intentionally unused for lint.
+    wire _unused = &{uio_in[7:2], sum[1:0], 1'b0};
 endmodule
+`default_nettype wire

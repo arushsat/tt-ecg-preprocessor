@@ -11,3 +11,12 @@ test/sim_build
 test/__pycache__/
 test/results.xml
 test/gate_level_netlist.v
+
+.venv/
+build/
+verification/ecg.vcd
+__pycache__/
+
+*:Zone.Identifier
+
+*:Zone.Identifier
